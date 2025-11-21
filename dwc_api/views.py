@@ -32,6 +32,9 @@ from dwc_admin.models import (
     Profile,
     ServerStatistic,
     Session,
+    MysteryGift,
+    MysteryGiftDownload,
+    GameDistributionSettings,
 )
 
 from .serializers import (
@@ -46,6 +49,10 @@ from .serializers import (
     ServerStatisticSerializer,
     SessionSerializer,
     StatsOverviewSerializer,
+    MysteryGiftSerializer,
+    MysteryGiftListSerializer,
+    MysteryGiftDownloadSerializer,
+    GameDistributionSettingsSerializer,
 )
 
 
@@ -556,6 +563,124 @@ def stats_overview(request):
     return Response(serializer.data)
 
 
+# =============================================================================
+# Mystery Gift ViewSet
+# =============================================================================
+
+class MysteryGiftViewSet(viewsets.ModelViewSet):
+    """
+    API endpoint for Mystery Gifts / DLC.
+
+    Actions:
+    - list: Get all mystery gifts (optionally filtered by game_id)
+    - retrieve: Get specific mystery gift
+    - create: Upload new mystery gift (admin only)
+    - update: Update mystery gift (admin only)
+    - destroy: Delete mystery gift (admin only)
+    - available: Get only currently available gifts
+    - by_game: Get gifts for specific game ID
+    """
+
+    queryset = MysteryGift.objects.all()
+    serializer_class = MysteryGiftSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['game_id', 'region', 'event_type', 'enabled']
+    search_fields = ['title', 'filename', 'description']
+    ordering_fields = ['created_at', 'download_count', 'title']
+    ordering = ['-created_at']
+
+    def get_permissions(self):
+        """Allow public access for list/retrieve, admin for modifications"""
+        if self.action in ['list', 'retrieve', 'available', 'by_game']:
+            return [AllowAny()]
+        return [IsAdminUser()]
+
+    def get_serializer_class(self):
+        """Use lightweight serializer for list view"""
+        if self.action == 'list':
+            return MysteryGiftListSerializer
+        return MysteryGiftSerializer
+
+    @action(detail=False, methods=['get'])
+    def available(self, request):
+        """Get only currently available mystery gifts"""
+        gifts = [gift for gift in self.get_queryset() if gift.is_available()]
+        serializer = self.get_serializer(gifts, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='game/(?P<game_id>[^/.]+)')
+    def by_game(self, request, game_id=None):
+        """
+        Get mystery gifts for a specific game.
+
+        Query params:
+        - available_only: true/false (default: true)
+        """
+        available_only = request.query_params.get('available_only', 'true').lower() == 'true'
+
+        gifts = self.get_queryset().filter(game_id=game_id)
+
+        if available_only:
+            gifts = [gift for gift in gifts if gift.is_available()]
+
+        serializer = self.get_serializer(gifts, many=True)
+        return Response(serializer.data)
+
+
+class MysteryGiftDownloadViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    API endpoint for Mystery Gift download tracking.
+
+    Read-only - downloads are tracked automatically by DLS1 server.
+
+    Actions:
+    - list: Get all download records
+    - retrieve: Get specific download record
+    - stats: Get download statistics
+    """
+
+    queryset = MysteryGiftDownload.objects.all()
+    serializer_class = MysteryGiftDownloadSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['mystery_gift', 'profile', 'ip_address']
+    search_fields = ['mystery_gift__title', 'mystery_gift__filename', 'ip_address']
+    ordering_fields = ['downloaded_at']
+    ordering = ['-downloaded_at']
+
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        """Get download statistics"""
+        total_downloads = self.get_queryset().count()
+        unique_ips = self.get_queryset().values('ip_address').distinct().count()
+
+        # Downloads by game
+        by_game = {}
+        for download in self.get_queryset().select_related('mystery_gift'):
+            game_id = download.mystery_gift.game_id
+            by_game[game_id] = by_game.get(game_id, 0) + 1
+
+        # Most popular gifts
+        popular_gifts = (
+            self.get_queryset()
+            .values('mystery_gift__title', 'mystery_gift__filename')
+            .annotate(count=Count('id'))
+            .order_by('-count')[:10]
+        )
+
+        return Response({
+            'total_downloads': total_downloads,
+            'unique_ips': unique_ips,
+            'downloads_by_game': by_game,
+            'most_popular_gifts': list(popular_gifts),
+        })
+
+
+# =============================================================================
+# API Root
+# =============================================================================
+
 @api_view(['GET'])
 def api_root(request):
     """
@@ -573,6 +698,25 @@ def api_root(request):
             'bans': '/api/bans/',
             'game_servers': '/api/game-servers/',
             'statistics': '/api/statistics/',
+            'mystery_gifts': '/api/mystery-gifts/',
+            'mystery_gift_downloads': '/api/mystery-gift-downloads/',
         },
         'documentation': '/api/docs/',
     })
+
+
+
+class GameDistributionSettingsViewSet(viewsets.ModelViewSet):
+    """ViewSet for Game Distribution Settings"""
+
+    queryset = GameDistributionSettings.objects.all()
+    serializer_class = GameDistributionSettingsSerializer
+    permission_classes = [IsAdminUser]
+    lookup_field = "game_id"
+
+    def get_permissions(self):
+        """Allow read access for DLS1 server"""
+        if self.action in ["retrieve", "list"]:
+            return [AllowAny()]
+        return [IsAdminUser()]
+

@@ -23,6 +23,9 @@ from dwc_admin.models import (
     Profile,
     ServerStatistic,
     Session,
+    MysteryGift,
+    MysteryGiftDownload,
+    GameDistributionSettings,
 )
 
 
@@ -406,3 +409,132 @@ class StatsOverviewSerializer(serializers.Serializer):
     logins_today = serializers.IntegerField()
     consoles_by_platform = serializers.ListField()
     top_games = serializers.ListField()
+
+
+# =============================================================================
+# Mystery Gift Serializers
+# =============================================================================
+
+class MysteryGiftSerializer(serializers.ModelSerializer):
+    """
+    Serializer for Mystery Gift model.
+
+    Includes computed fields:
+    - is_available: Whether the gift is currently available for download
+    - file_url: URL to download the .myg file
+    """
+
+    is_available = serializers.SerializerMethodField()
+    file_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MysteryGift
+        fields = [
+            'id',
+            'filename',
+            'file',
+            'file_url',
+            'file_size',
+            'game_id',
+            'title',
+            'description',
+            'event_type',
+            'region',
+            'enabled',
+            'start_date',
+            'end_date',
+            'download_count',
+            'is_available',
+            'created_at',
+            'updated_at',
+            'created_by',
+        ]
+        read_only_fields = ['file_size', 'download_count', 'created_at', 'updated_at']
+
+    def get_is_available(self, obj):
+        """Check if gift is currently available"""
+        return obj.is_available()
+
+    def get_file_url(self, obj):
+        """Get full URL for the file"""
+        if obj.file:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.file.url)
+            return obj.file.url
+        return None
+
+
+class MysteryGiftListSerializer(serializers.ModelSerializer):
+    """
+    Lightweight serializer for list view.
+
+    Used by DLS1 server for list/count endpoints.
+    """
+
+    is_available = serializers.SerializerMethodField()
+    file_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MysteryGift
+        fields = [
+            'id',
+            'filename',
+            'file',
+            'file_url',
+            'file_size',
+            'game_id',
+            'title',
+            'region',
+            'enabled',
+            'is_available',
+        ]
+
+    def get_is_available(self, obj):
+        return obj.is_available()
+
+    def get_file_url(self, obj):
+        """Get full URL for the file"""
+        if obj.file:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.file.url)
+            return obj.file.url
+        return None
+
+
+class MysteryGiftDownloadSerializer(serializers.ModelSerializer):
+    """Serializer for Mystery Gift Download tracking"""
+
+    mystery_gift_title = serializers.CharField(source='mystery_gift.title', read_only=True)
+    mystery_gift_filename = serializers.CharField(source='mystery_gift.filename', read_only=True)
+    profile_id = serializers.IntegerField(source='profile.profile_id', read_only=True, allow_null=True)
+
+    class Meta:
+        model = MysteryGiftDownload
+        fields = [
+            'id',
+            'mystery_gift',
+            'mystery_gift_title',
+            'mystery_gift_filename',
+            'profile',
+            'profile_id',
+            'ip_address',
+            'user_agent',
+            'downloaded_at',
+        ]
+        read_only_fields = ['downloaded_at']
+
+
+class GameDistributionSettingsSerializer(serializers.ModelSerializer):
+    """Serializer for Game Distribution Settings"""
+
+    class Meta:
+        model = GameDistributionSettings
+        fields = [
+            "game_id",
+            "distribution_mode",
+            "track_downloads",
+            "reset_on_completion",
+        ]
+

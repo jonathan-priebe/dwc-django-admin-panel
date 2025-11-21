@@ -15,6 +15,9 @@ router.register(r'nas-logins', views.NASLoginViewSet, basename='naslogin')
 router.register(r'bans', views.BannedItemViewSet, basename='ban')
 router.register(r'game-servers', views.GameServerViewSet, basename='gameserver')
 router.register(r'statistics', views.ServerStatisticViewSet, basename='statistic')
+router.register(r'mystery-gifts', views.MysteryGiftViewSet, basename='mysterygift')
+router.register(r'mystery-gift-downloads', views.MysteryGiftDownloadViewSet, basename='mysterygiftdownload')
+router.register(r'game-distribution-settings', views.GameDistributionSettingsViewSet, basename='gamedistributionsettings')
 
 urlpatterns = [
     # API root
