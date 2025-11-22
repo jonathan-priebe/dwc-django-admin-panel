@@ -8,7 +8,8 @@ from django.utils import timezone
 from datetime import timedelta
 from .models import (
     Console, Profile, Session, NASLogin,
-    AllowList, DenyList, BannedItem, GameServer, Pending, NatNeg, ServerStatistic
+    AllowList, DenyList, BannedItem, GameServer, Pending, NatNeg, ServerStatistic,
+    MysteryGift, MysteryGiftDownload, GameDistributionSettings
 )
 
 
@@ -349,6 +350,156 @@ class ServerStatisticAdmin(admin.ModelAdmin):
     def has_change_permission(self, request, obj=None):
         # Statistics are read-only
         return False
+
+
+@admin.register(MysteryGift)
+class MysteryGiftAdmin(admin.ModelAdmin):
+    list_display = [
+        'title',
+        'filename',
+        'game_id',
+        'region',
+        'priority',
+        'event_type',
+        'enabled',
+        'is_available_display',
+        'download_count',
+        'created_at'
+    ]
+    list_filter = ['game_id', 'region', 'event_type', 'enabled', 'created_at']
+    search_fields = ['title', 'filename', 'game_id', 'description']
+    readonly_fields = ['file_size', 'download_count', 'created_at', 'updated_at']
+    actions = ['enable_gifts', 'disable_gifts', 'enable_all_gifts', 'disable_all_gifts']
+    list_editable = ['enabled', 'priority']
+
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('title', 'filename', 'game_id', 'region')
+        }),
+        ('File', {
+            'fields': ('file', 'file_size')
+        }),
+        ('Description', {
+            'fields': ('description', 'event_type')
+        }),
+        ('Availability', {
+            'fields': ('enabled', 'priority', 'start_date', 'end_date'),
+            'description': 'Control when this gift is available and its priority'
+        }),
+        ('Statistics', {
+            'fields': ('download_count', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+        ('Metadata', {
+            'fields': ('created_by',),
+            'classes': ('collapse',)
+        }),
+    )
+
+    def enabled_display(self, obj):
+        if obj.enabled:
+            return format_html('<span style="color: green;">✓ Enabled</span>')
+        return format_html('<span style="color: red;">✗ Disabled</span>')
+    enabled_display.short_description = 'Status'
+
+    def is_available_display(self, obj):
+        if obj.is_available():
+            return format_html('<span style="color: green; font-weight: bold;">🎁 Available</span>')
+        return format_html('<span style="color: gray;">○ Unavailable</span>')
+    is_available_display.short_description = 'Distribution'
+
+    def enable_gifts(self, request, queryset):
+        count = queryset.update(enabled=True)
+        self.message_user(request, f'{count} mystery gift(s) enabled.')
+    enable_gifts.short_description = "✓ Enable selected gifts"
+
+    def disable_gifts(self, request, queryset):
+        count = queryset.update(enabled=False)
+        self.message_user(request, f'{count} mystery gift(s) disabled.')
+    disable_gifts.short_description = "✗ Disable selected gifts"
+
+    def enable_all_gifts(self, request, queryset):
+        """Enable ALL mystery gifts, not just selected ones"""
+        count = MysteryGift.objects.all().update(enabled=True)
+        self.message_user(request, f'✓ ALL {count} mystery gifts have been enabled!')
+    enable_all_gifts.short_description = "✓✓ ENABLE ALL GIFTS (ignores selection)"
+
+    def disable_all_gifts(self, request, queryset):
+        """Disable ALL mystery gifts, not just selected ones"""
+        count = MysteryGift.objects.all().update(enabled=False)
+        self.message_user(request, f'✗ ALL {count} mystery gifts have been disabled!')
+    disable_all_gifts.short_description = "✗✗ DISABLE ALL GIFTS (ignores selection)"
+
+    def save_model(self, request, obj, form, change):
+        """Auto-populate created_by field"""
+        if not change:  # Only on creation
+            obj.created_by = request.user.username
+        super().save_model(request, obj, form, change)
+
+
+@admin.register(MysteryGiftDownload)
+class MysteryGiftDownloadAdmin(admin.ModelAdmin):
+    list_display = [
+        'mystery_gift',
+        'profile_display',
+        'ip_address',
+        'downloaded_at'
+    ]
+    list_filter = ['downloaded_at', 'mystery_gift__game_id']
+    search_fields = [
+        'mystery_gift__title',
+        'mystery_gift__filename',
+        'ip_address',
+        'profile__user_id'
+    ]
+    readonly_fields = ['mystery_gift', 'profile', 'ip_address', 'user_agent', 'downloaded_at']
+    date_hierarchy = 'downloaded_at'
+
+    def profile_display(self, obj):
+        if obj.profile:
+            return format_html(
+                '<a href="/admin/dwc_admin/profile/{}/change/">{}</a>',
+                obj.profile.profile_id,
+                obj.profile
+            )
+        return format_html('<span style="color: gray;">Anonymous</span>')
+    profile_display.short_description = 'Profile'
+
+    def has_add_permission(self, request):
+        # Downloads are tracked automatically
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        # Downloads are read-only
+        return False
+
+
+@admin.register(GameDistributionSettings)
+class GameDistributionSettingsAdmin(admin.ModelAdmin):
+    list_display = [
+        'game_id',
+        'distribution_mode',
+        'track_downloads',
+        'reset_on_completion'
+    ]
+    list_filter = ['distribution_mode', 'track_downloads']
+    search_fields = ['game_id']
+
+    fieldsets = (
+        ('Game Information', {
+            'fields': ('game_id',)
+        }),
+        ('Distribution Settings', {
+            'fields': ('distribution_mode', 'track_downloads', 'reset_on_completion'),
+            'description': (
+                '<strong>Random</strong>: Pick one random gift from available gifts<br>'
+                '<strong>Priority</strong>: Pick the highest priority gift<br>'
+                '<strong>All</strong>: Show all gifts (for non-Pokemon games)<br><br>'
+                '<em>Track downloads</em>: Prevent users from getting duplicate gifts<br>'
+                '<em>Reset on completion</em>: Allow re-downloading after user has all gifts'
+            )
+        }),
+    )
 
 
 # Customize Admin Site

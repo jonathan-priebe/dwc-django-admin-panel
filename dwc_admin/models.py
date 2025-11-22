@@ -422,13 +422,213 @@ class ServerStatistic(models.Model):
     active_profiles = models.IntegerField(default=0)
     active_servers = models.IntegerField(default=0)
     total_logins_today = models.IntegerField(default=0)
-    
+
     class Meta:
         db_table = 'server_statistics'
         verbose_name = 'Server Statistic'
         verbose_name_plural = 'Server Statistics'
         ordering = ['-timestamp']
         get_latest_by = 'timestamp'
-    
+
     def __str__(self):
         return f"Stats @ {self.timestamp}"
+
+
+class MysteryGift(models.Model):
+    """Mystery Gift / DLC for distribution via DLS1 server"""
+
+    # File and identification
+    filename = models.CharField(
+        max_length=255,
+        unique=True,
+        db_index=True,
+        help_text="Mystery Gift filename (e.g., 154p.myg)"
+    )
+    file = models.FileField(
+        upload_to='mystery_gifts/',
+        help_text="Upload .myg file"
+    )
+    file_size = models.IntegerField(
+        default=0,
+        help_text="File size in bytes (auto-populated)"
+    )
+
+    # Game association
+    game_id = models.CharField(
+        max_length=10,
+        db_index=True,
+        help_text="Game ID (e.g., CPUE for Pokemon Platinum USA)"
+    )
+
+    # Display information
+    title = models.CharField(
+        max_length=200,
+        help_text="Display name (e.g., 'Secret Key Event')"
+    )
+    description = models.TextField(
+        blank=True,
+        help_text="Event description"
+    )
+
+    # Event metadata
+    event_type = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Type of event (e.g., 'Pokemon', 'Item', 'Unlock')"
+    )
+    region = models.CharField(
+        max_length=10,
+        blank=True,
+        help_text="Region code (US, EU, JP, etc.)"
+    )
+
+    # Availability
+    enabled = models.BooleanField(
+        default=True,
+        help_text="Whether this gift is currently available for download"
+    )
+    priority = models.IntegerField(
+        default=0,
+        help_text="Priority for distribution (higher = more important). Used when distribution_mode is 'priority'"
+    )
+    start_date = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When this gift becomes available (optional)"
+    )
+    end_date = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When this gift expires (optional)"
+    )
+
+    # Statistics
+    download_count = models.IntegerField(
+        default=0,
+        help_text="Number of times downloaded"
+    )
+
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Admin who created this"
+    )
+
+    class Meta:
+        db_table = 'mystery_gifts'
+        verbose_name = 'Mystery Gift'
+        verbose_name_plural = 'Mystery Gifts'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['game_id', 'enabled']),
+        ]
+
+    def is_available(self):
+        """Check if gift is currently available"""
+        if not self.enabled:
+            return False
+
+        now = timezone.now()
+
+        if self.start_date and now < self.start_date:
+            return False
+
+        if self.end_date and now > self.end_date:
+            return False
+
+        return True
+
+    is_available.boolean = True
+    is_available.short_description = 'Available'
+
+    def save(self, *args, **kwargs):
+        """Auto-populate file_size on save"""
+        if self.file and not self.file_size:
+            self.file_size = self.file.size
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.title} ({self.game_id}) - {self.filename}"
+
+
+class GameDistributionSettings(models.Model):
+    """Distribution settings for Mystery Gifts per game"""
+
+    DISTRIBUTION_MODES = [
+        ('random', 'Random - Pick one random gift from available'),
+        ('priority', 'Priority - Pick highest priority gift'),
+        ('all', 'All - Show all gifts (for non-Pokemon games)'),
+    ]
+
+    game_id = models.CharField(
+        max_length=10,
+        unique=True,
+        db_index=True,
+        help_text="Game ID (e.g., CPUD for Pokemon Platinum Germany)"
+    )
+    distribution_mode = models.CharField(
+        max_length=20,
+        choices=DISTRIBUTION_MODES,
+        default='random',
+        help_text="How to select which gift to give to the user"
+    )
+    track_downloads = models.BooleanField(
+        default=True,
+        help_text="Track which gifts users have already received (prevents duplicates)"
+    )
+    reset_on_completion = models.BooleanField(
+        default=True,
+        help_text="When user has all gifts, reset and allow re-downloading"
+    )
+
+    class Meta:
+        db_table = 'game_distribution_settings'
+        verbose_name = 'Game Distribution Setting'
+        verbose_name_plural = 'Game Distribution Settings'
+        ordering = ['game_id']
+
+    def __str__(self):
+        return f"{self.game_id} - {self.get_distribution_mode_display()}"
+
+
+class MysteryGiftDownload(models.Model):
+    """Track Mystery Gift downloads"""
+
+    mystery_gift = models.ForeignKey(
+        MysteryGift,
+        on_delete=models.CASCADE,
+        related_name='downloads'
+    )
+    profile = models.ForeignKey(
+        Profile,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='mystery_gifts_received',
+        help_text="User who downloaded (if tracked)"
+    )
+
+    # Download info
+    ip_address = models.GenericIPAddressField()
+    user_agent = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Client user agent"
+    )
+    downloaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'mystery_gift_downloads'
+        verbose_name = 'Mystery Gift Download'
+        verbose_name_plural = 'Mystery Gift Downloads'
+        ordering = ['-downloaded_at']
+        indexes = [
+            models.Index(fields=['mystery_gift', 'downloaded_at']),
+            models.Index(fields=['profile', 'downloaded_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.mystery_gift.filename} @ {self.downloaded_at}"
